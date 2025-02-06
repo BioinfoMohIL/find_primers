@@ -1,7 +1,7 @@
-import sys
+mport sys
 import os
 import time
-from itertools import zip_longest
+from itertools import zip_longest, product
 from datetime import datetime
 
 
@@ -10,7 +10,7 @@ def read_fasta(file_path):
     sequences = []
     current_seq = []
     header = None
-    
+   
     with open(file_path, 'r') as file:
         for line in file:
             line = line.strip()
@@ -69,7 +69,7 @@ def html_starter(header):
                     font-size: 16px;
                     text-decoration: none;
                     width: 25px;
-                    box-shadow: 1px 1px 1px rgba(0, 140, 255); 
+                    box-shadow: 1px 1px 1px rgba(0, 140, 255);
                     text-align: center;
                     border-radius: 8px;  
                     color: white;
@@ -81,17 +81,17 @@ def html_starter(header):
 
             .styled-button:hover {{
                 background-color: #0099cc;
-                box-shadow: 1px 1px 6px rgba(0, 140, 255); 
+                box-shadow: 1px 1px 6px rgba(0, 140, 255);
             }}
 
             .styled-button:active {{
-                box-shadow: none; 
+                box-shadow: none;
             }}
 
 
             .buttons {{
                 margin-right: 12px;
-                user-select: none; 
+                user-select: none;
                 -webkit-user-select: none; /* For Safari */
                 -moz-user-select: none; /* For Firefox */
                 -ms-user-select: none; /* For Internet Explorer/Edge */
@@ -103,26 +103,30 @@ def html_starter(header):
             <pre><strong>{header}</strong>\n
         """
 
-def calcul_primers_distances(contig):
-    items = list(contig.items())
-    distances = []
-    i = 0
-    while i < len(items) - 1:
-        key1, dict1 = items[i]
-        key2, dict2 = items[i + 1]
-        primer1, value1 = next(iter(dict1.items()))
-        primer2, value2 = next(iter(dict2.items()))  
+def calcul_primers_distances(data):
+    """
+    Compares 'dist' values one by one and adds 'len' to the greater number.
+    The dist contains the location of the primer start location
+    We don't know if we have the pr1 first, or the pr2
+    So when a primer location is greater, it's mean the primer come after
+    For example, pr1 = 50 and pr2 = 100, so whe need to add pr2 lenght to get
+    the all sequence length
+    """
+    result = []
+    dist1, len1 = data['pr1']['dist'], data['pr1']['len']
+    dist2, len2 = data['pr2']['dist'], data['pr2']['len']
+    for d1, d2 in zip(dist1, dist2):
+        # print(d1, d2, len1, len2)
+        if d1 > d2:
+            result.append(d1 + len1 - d2)
+        else:
+            result.append(d2 + len2 - d1)
 
-        if primer1 != primer2:
-            diff = abs(value1 - value2)
-            distances.append(diff)
-            i += 1
-        i+=1
-    return distances
+    return result
 
 def find_contig_primers(idx, header, sequence, primers, colors):
     """Highlight primer sequences in an HTML format with proper styling."""
-    
+   
     global ANCHORS_COUNT_PR1
     global ANCHORS_COUNT_PR2
     global ANCHORS_COUNT_PROBE
@@ -133,8 +137,6 @@ def find_contig_primers(idx, header, sequence, primers, colors):
     html_content = html_starter(header)
     sequence_upper = sequence.upper()
     primers_upper = [p.upper() for p in primers]
-    primer_start = []
-    primer_end = []
     distances = []
     color_count = len(colors)
     contigs = { idx: {}}
@@ -151,16 +153,13 @@ def find_contig_primers(idx, header, sequence, primers, colors):
             if sequence_upper[i:i + len(primer)] == primer:              
                 count += 1
                 if j == 0:
-                    primer_start.append(i)
-                    if count not in contigs[idx]:
-                        contigs[idx][count] = {}
-                    contigs[idx][count]['pr1'] = i
-                elif j == 1:
-                    primer_end.append(i + len(primer))
-                    
-                    if count not in contigs[idx]:
-                        contigs[idx][count] = {}
-                    contigs[idx][count]['pr2'] = i + len(primer)
+                    if 'pr1' not in contigs[idx]:
+                        contigs[idx]['pr1'] = {'dist': [], 'len': len(primer)}
+                    contigs[idx]['pr1']['dist'].append(i)
+                elif j == 1:                    
+                    if 'pr2' not in contigs[idx]:
+                        contigs[idx]['pr2'] = {'dist': [], 'len': len(primer)}
+                    contigs[idx]['pr2']['dist'].append(i)
                 color = colors[j % color_count]
    
                 if j == 0:
@@ -183,15 +182,12 @@ def find_contig_primers(idx, header, sequence, primers, colors):
             i += 1
 
     # Calcul sequence length beween pr1 et pr2
-    # With the 'contigs' we have position/appareance of each primer
-    # The func iterate over it, compare item=primer and the one next to it, if the 
-    # primer is different (pr1 and pr2), calcul the distance
-    # It's prevent to bug if there are several primers like 1-1-1-2-1-2-1
+    # With the 'contigs' we have position/appareance of each primer (0, 1, 2 ..)
     contig = contigs[idx]
-    if len(contig) >= 2:
+    if len(contig) > 0 and 'pr1' in contig and 'pr2' in contig:
         distances = calcul_primers_distances(contig)
     html_content += "</pre></body></html>"
-    
+   
     return html_content, distances
 
 def save_html(html_content, output_dir, input_filename):
@@ -204,7 +200,7 @@ def save_html(html_content, output_dir, input_filename):
 
     with open(output_path, "w") as file:
         file.write(html_content)
-    
+   
     return output_path
 
 def log_message(log_dir, message):
@@ -303,16 +299,16 @@ def create_navigation_window(distances, anchors_count):
                 }});
             }})
             </script>
-        """ 
-    
+        """
+   
     if distances:
         header += f'&#129516; <b>Found:</b> {len(distances)} sequence(s) <br>'
         header += '&#128295; <b>Length:</b>'
-        
+       
         for i, d in enumerate(distances):
-            content += f"<span> {d} bp</span>" 
+            content += f"<span> {d} bp</span>"
             if i < len(distances)-1:
-                content += ',' 
+                content += ','
         content += '<br><br>'
         content += logic
     elif pr1_max or pr2_max or pr3_max:
@@ -320,11 +316,11 @@ def create_navigation_window(distances, anchors_count):
         content += logic  
     else:
         header += '&#129516; <b>No data founded !</b><br>'
-    
+   
     if pr1_max:
         content += f'''
             <div><span class="buttons">
-            Primer 1 
+            Primer 1
             <a id="primer1_up" style="background-color: #FFAC1C;" class="styled-button" >&#11014</a>
             <a id="primer1_down" style="background-color: #FFD580" class="styled-button" >&#11015</a>
             <span class="counter"><span class="count_1">0</span>/{pr1_max}</span>
@@ -333,7 +329,7 @@ def create_navigation_window(distances, anchors_count):
     if pr2_max:
         content += f'''
             <span class="buttons">
-                Primer 2 
+                Primer 2
                 <a id="primer2_up"  style="background-color: #FF0000;" class="styled-button" >&#11014</a>
                 <a id="primer2_down"  style="background-color: #E97451;" class="styled-button" >&#11015</a>
                 <span class="counter"><span class="count_2">0</span>/{pr2_max}</span>
@@ -342,7 +338,7 @@ def create_navigation_window(distances, anchors_count):
     if pr3_max:
         content += f'''
             <span class="buttons">
-                Probe 
+                Probe
                 <a id="primer3_up" style="background-color: #FF3659;" class="styled-button" >&#11014</a>
                 <a id="primer3_down" style="background-color: #FF647F;" class="styled-button" >&#11015</a>
                 <span class="counter"><span class="count_3">0</span>/{pr3_max}</span>
@@ -350,14 +346,33 @@ def create_navigation_window(distances, anchors_count):
         </div>
         '''
 
-    
+   
     return f"""
             {nav}
             {header}
             {content}
         </div>  
         """
-    
+   
+def invert_complement_dna(sequence: str):
+    """
+    Inverts (reverses) and complements a DNA sequence.
+    Example: ATCG -> CGAT
+    """
+    complement = {
+        'A': 'T', 'T': 'A', 'C': 'G', 'G': 'C'
+    }
+    sequence = sequence.upper()
+    return ''.join(complement[base] for base in reversed(sequence))
+
+def generate_combinations(sequences):
+    """
+    Generates all possible combinations of the given sequences
+    in both forward and inverted-complement forms.
+    """
+    all_variants = [(seq, invert_complement_dna(seq)) for seq in sequences]
+    return [list(combo) for combo in product(*all_variants)]
+
 
 ANCHORS_COUNT_PR1 = 0
 ANCHORS_COUNT_PR2 = 0
@@ -377,6 +392,9 @@ fasta_file = sys.argv[1]
 primers = [sys.argv[2], sys.argv[3], sys.argv[4]]
 output_dir = f"{sys.argv[5]}/results"
 log_dir = "logs"
+
+# Get all combination from the primers forward - reverse
+all_primers_combinations = generate_combinations(primers)
 
 primers_colors = [
     (1, 0.7, 0),    
@@ -404,24 +422,55 @@ seq_distances = []
 
 # Enumerate each contigs
 # When finded pr1 et 2, calcul the distance to display it in the window
-for idx, (header, seq) in enumerate(sequences): 
-    html_output, distances = find_contig_primers(idx, header, seq, primers, primers_colors)
-    
-    if distances:
-        seq_distances = distances
+matches_counter = 0
+matched = {}
 
-    html_outputs.append(html_output)
+'''
+We want to check all combination forw and reverse for all primers/probe
+to be sur not miss some sequence
+'''
+print("[Lazy Moti Mode]  Fetch all primers combinations (forw, rev) automatically")
 
+for primers_combination in all_primers_combinations:
+    html_outputs = []
+    for idx, (header, seq) in enumerate(sequences):
+        html_output, distances = find_contig_primers(idx, header, seq, primers_combination, primers_colors)
 
-html_outputs.append(
-    create_navigation_window(
-        distances=seq_distances, 
-        anchors_count=[ANCHORS_COUNT_PR1, ANCHORS_COUNT_PR2, ANCHORS_COUNT_PROBE]
+        if distances:
+            seq_distances.extend(distances)
+
+        html_outputs.append(html_output)
+
+    new_matches_counter = ANCHORS_COUNT_PR1 + ANCHORS_COUNT_PR2 + ANCHORS_COUNT_PROBE
+   
+    if new_matches_counter > matches_counter:
+        matches_counter = new_matches_counter
+        matched = {
+            'matches_counter': matches_counter,
+            'pr1_count': ANCHORS_COUNT_PR1,
+            'pr2_count': ANCHORS_COUNT_PR2,
+            'pr3_count': ANCHORS_COUNT_PROBE,
+            'html_outputs': html_outputs
+        }
+
+    ANCHORS_COUNT_PR1 = 0
+    ANCHORS_COUNT_PR2 = 0
+    ANCHORS_COUNT_PROBE = 0
+
+if matched:
+    matched['html_outputs'].append(
+        create_navigation_window(
+            distances=seq_distances,
+            anchors_count=[
+                matched['pr1_count'],
+                matched['pr2_count'],
+                matched['pr3_count']]
+            )
         )
-    )
-output_path = save_html("\n".join(html_outputs), output_dir, fasta_file)
+    output_path = save_html("\n".join(matched['html_outputs']), output_dir, fasta_file)
 
-elapsed_time = int(time.time() - start_time) 
-success_msg = f"[OK] Processing completed in {elapsed_time} seconds. Output saved to {output_path}"
-print(success_msg)
-log_message(log_dir, success_msg)
+    elapsed_time = int(time.time() - start_time)
+    success_msg = f"[OK] Processing completed in {elapsed_time} seconds. Output saved to {output_path}"
+
+    print(success_msg)
+    log_message(log_dir, success_msg)
